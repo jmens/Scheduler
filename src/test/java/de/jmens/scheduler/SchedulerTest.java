@@ -4,44 +4,18 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.is;
 import static org.slf4j.LoggerFactory.getLogger;
 
-import java.util.UUID;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.TimeUnit;
+import de.jmens.scheduler.test.TestTask;
 import java.util.stream.IntStream;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.slf4j.Logger;
 
 class SchedulerTest {
 
+  private static final Logger LOGGER = getLogger(TestTask.class);
+
   private Scheduler<TestTask, String> scheduler;
-
-  public static class TestTask implements Runnable {
-
-    private static final Logger LOGGER = getLogger(TestTask.class);
-
-    private String id = UUID.randomUUID().toString();
-
-    private CompletableFuture<Boolean> executed = new CompletableFuture<>();
-
-    @Override
-    public void run() {
-      executed.complete(true);
-      LOGGER.trace("Task {} executed", id);
-    }
-
-    String getKey() {
-      return id;
-    }
-
-    boolean isExecuted() {
-      try {
-        return executed.get(10, TimeUnit.SECONDS);
-      } catch (Exception e) {
-        return false;
-      }
-    }
-  }
 
   @BeforeEach
   void setupTest() {
@@ -49,19 +23,61 @@ class SchedulerTest {
   }
 
   @Test
-  void testAddTask() {
+  @DisplayName("Add tasks to halted scheduler")
+  void testTasksInHaltedScheduler() {
+
+    LOGGER.info("Adding 100 tasks to the halted scheduler");
+
     IntStream.range(0, 100).boxed().map(i -> new TestTask()).forEach(task -> scheduler.add(task));
 
-    assertThat(scheduler.countKeys(), is(100));
+    assertThat("Current task load should be 100", scheduler.countKeys(), is(100));
   }
 
   @Test
+  @DisplayName("Basic execution of tasks")
   void testExecution() {
+
+    LOGGER.info("Starting scheduler");
+
     scheduler.start();
+
     IntStream.range(0, 100)
+        .parallel()
         .boxed()
         .map(i -> new TestTask())
         .peek(task -> scheduler.add(task))
-        .forEach(task -> assertThat(task.isExecuted(), is(true)));
+        .forEach(task -> assertThat("Task should be executed", task.isExecuted(), is(true)));
+  }
+
+  @Test
+  @DisplayName("Exceed schedulers task pool size")
+  void testExceedExecutorCapacity() {
+
+    LOGGER.info("Starting scheduler");
+
+    scheduler.updateMaximumPoolSize(5).start();
+
+    IntStream.range(0, 10)
+        .boxed()
+        .parallel()
+        .map(
+            i ->
+                new TestTask() {
+                  @Override
+                  public void run() {
+                    sleep(100);
+                    super.run();
+                  }
+                })
+        .peek(task -> scheduler.add(task))
+        .forEach(task -> assertThat("Task should be executed", task.isExecuted(), is(true)));
+  }
+
+  private static final void sleep(int milliseconds) {
+    try {
+      Thread.sleep(milliseconds);
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+    }
   }
 }

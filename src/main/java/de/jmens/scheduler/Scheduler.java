@@ -1,6 +1,7 @@
 package de.jmens.scheduler;
 
 import static java.util.concurrent.TimeUnit.SECONDS;
+import static org.slf4j.LoggerFactory.getLogger;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -13,8 +14,11 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.function.Function;
 import java.util.stream.IntStream;
+import org.slf4j.Logger;
 
 public class Scheduler<Task extends Runnable, Key> implements AutoCloseable {
+
+  private static final Logger LOGGER = getLogger(Scheduler.class);
 
   private Map<Key, Queue<Task>> tasksByKey = new ConcurrentHashMap<>();
   private Queue<Queue<Task>> taskGroups = new ConcurrentLinkedQueue<>();
@@ -56,8 +60,11 @@ public class Scheduler<Task extends Runnable, Key> implements AutoCloseable {
   }
 
   public Scheduler<Task, Key> add(final Task task) {
+
     // Generate key for this task
     final var key = keyExtractor.apply(task);
+
+    LOGGER.trace("Submitting task {} to scheduler", key);
 
     // Create queue for this key, if not already existing
     final var queue =
@@ -72,21 +79,25 @@ public class Scheduler<Task extends Runnable, Key> implements AutoCloseable {
     // Add task to its queue
     queue.add(task);
 
-    if (running) {
-      nextFreeExecutor().ifPresent(executor -> executor.submit(task));
-    }
+    if (running)
+      synchronized (Scheduler.class) {
+        nextFreeExecutor().ifPresent(executor -> executor.submit(task));
+      }
 
     return this;
   }
 
   private Optional<ThreadPoolExecutor> nextFreeExecutor() {
+    LOGGER.trace("Executor requested, executor pool size is {}", executors.size());
     for (int i = 0; i < executors.size(); i++) {
       lastElectedExecutor = (lastElectedExecutor + 1) % executors.size();
       final var executor = executors.get(lastElectedExecutor);
-      if (executor.getPoolSize() < maximumPoolSize) {
+      if (executor.getQueue().size() < maximumPoolSize) {
+        LOGGER.trace("Eligble executor found: {}", executor);
         return Optional.of(executor);
       }
     }
+    LOGGER.trace("No eligible executor found, all {} executors are saturated", executors.size());
     return Optional.empty();
   }
 
@@ -97,6 +108,11 @@ public class Scheduler<Task extends Runnable, Key> implements AutoCloseable {
 
   public int countKeys() {
     return taskGroups.size();
+  }
+
+  public Scheduler<Task, Key> updateMaximumPoolSize(final int limit) {
+    this.maximumPoolSize = limit;
+    return this;
   }
 
   @Override
