@@ -18,7 +18,7 @@ public class TestTask implements Runnable {
   @Override
   public void run() {
     executed.complete(true);
-    LOGGER.info("Task {} executed", id);
+    LOGGER.trace("Task {} executed", id);
   }
 
   public String getKey() {
@@ -27,8 +27,9 @@ public class TestTask implements Runnable {
 
   public boolean isExecuted() {
     try {
-      return executed.get(10, TimeUnit.SECONDS);
+      return executed.get(15, TimeUnit.SECONDS);
     } catch (Exception e) {
+      LOGGER.info("Task {} not executed", id);
       return false;
     }
   }

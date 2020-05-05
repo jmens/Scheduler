@@ -10,6 +10,7 @@ import java.util.Optional;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.function.Function;
@@ -21,7 +22,9 @@ public class Scheduler<Task extends Runnable, Key> implements AutoCloseable {
   private static final Logger LOGGER = getLogger(Scheduler.class);
 
   private Map<Key, Queue<Task>> tasksByKey = new ConcurrentHashMap<>();
-  private Queue<Queue<Task>> taskGroups = new ConcurrentLinkedQueue<>();
+
+  private List<Queue<Task>> taskGroups = new CopyOnWriteArrayList<>();
+  private int lastElectedTaskGroup;
 
   private Function<Task, Key> keyExtractor;
 
@@ -79,12 +82,27 @@ public class Scheduler<Task extends Runnable, Key> implements AutoCloseable {
     // Add task to its queue
     queue.add(task);
 
-    if (running)
-      synchronized (Scheduler.class) {
-        nextFreeExecutor().ifPresent(executor -> executor.submit(task));
-      }
+    submit(task);
 
     return this;
+  }
+
+  private void submit(final Task task) {
+    // TODO: Mark task as submitted
+    // Implement marker in FeedbackingTask and wrap Tasks when submitted to this scheduler
+    if (running)
+      synchronized (Scheduler.class) {
+        nextFreeExecutor().ifPresent(executor -> executor.submit(feedbacking(task)));
+      }
+  }
+
+  private void remove(final Task task) {
+    // TODO: Null safety
+    tasksByKey.get(keyExtractor.apply(task)).remove(task);
+  }
+
+  private Runnable feedbacking(final Task task) {
+    return new FeedbackingTask(task, this);
   }
 
   private Optional<ThreadPoolExecutor> nextFreeExecutor() {
@@ -99,6 +117,11 @@ public class Scheduler<Task extends Runnable, Key> implements AutoCloseable {
     }
     LOGGER.trace("No eligible executor found, all {} executors are saturated", executors.size());
     return Optional.empty();
+  }
+
+  private Task nextEligibleTask() {
+    lastElectedTaskGroup = (lastElectedTaskGroup + 1) % taskGroups.size();
+    return taskGroups.get(lastElectedTaskGroup).peek();
   }
 
   public Scheduler<Task, Key> start() {
@@ -118,5 +141,11 @@ public class Scheduler<Task extends Runnable, Key> implements AutoCloseable {
   @Override
   public void close() {
     this.executors.forEach(executor -> executor.shutdown());
+  }
+
+  public void taskFinished(final Task task) {
+    LOGGER.info("Task {} finished", keyExtractor.apply(task));
+    remove(task);
+    submit(nextEligibleTask());
   }
 }
