@@ -57,7 +57,7 @@ class SchedulerTest {
 
     scheduler.updateMaximumPoolSize(5).start();
 
-    IntStream.range(0, 20)
+    IntStream.range(0, 10)
         .boxed()
         .parallel()
         .map(

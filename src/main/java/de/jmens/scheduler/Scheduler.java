@@ -87,6 +87,21 @@ public class Scheduler<Task extends Runnable, Key> implements AutoCloseable {
     return this;
   }
 
+  private void submitEligibleTasks() {
+    /** TODO: Mark task as submitted, see {@link #submit(Task task)} */
+    Optional<ThreadPoolExecutor> executor;
+    while ((executor = nextFreeExecutor()).isPresent()) {
+      final var task = nextEligibleTask();
+      if (task.isEmpty()) {
+        LOGGER.info("No more eligible tasks available.");
+        return;
+      }
+      LOGGER.info("Submitting task {} to executor", keyExtractor.apply(task.get()));
+      executor.get().submit(feedbacking(task.get()));
+    }
+    LOGGER.info("No more free executors availale");
+  }
+
   private void submit(final Task task) {
     // TODO: Mark task as submitted
     // Implement marker in FeedbackingTask and wrap Tasks when submitted to this scheduler
@@ -98,11 +113,12 @@ public class Scheduler<Task extends Runnable, Key> implements AutoCloseable {
 
   private void remove(final Task task) {
     // TODO: Null safety
+    LOGGER.info("Removing task {} from scheduler", keyExtractor.apply(task));
     tasksByKey.get(keyExtractor.apply(task)).remove(task);
   }
 
   private Runnable feedbacking(final Task task) {
-    return new FeedbackingTask(task, this);
+    return new FeedbackingTask<>(task, this);
   }
 
   private Optional<ThreadPoolExecutor> nextFreeExecutor() {
@@ -119,9 +135,13 @@ public class Scheduler<Task extends Runnable, Key> implements AutoCloseable {
     return Optional.empty();
   }
 
-  private Task nextEligibleTask() {
-    lastElectedTaskGroup = (lastElectedTaskGroup + 1) % taskGroups.size();
-    return taskGroups.get(lastElectedTaskGroup).peek();
+  private Optional<Task> nextEligibleTask() {
+    // TODO: Null safety
+    for (int i = 0; i < taskGroups.size(); i++) {
+      lastElectedTaskGroup = (lastElectedTaskGroup + 1) % taskGroups.size();
+      return Optional.of(taskGroups.get(lastElectedTaskGroup).peek());
+    }
+    return Optional.empty();
   }
 
   public Scheduler<Task, Key> start() {
@@ -143,9 +163,9 @@ public class Scheduler<Task extends Runnable, Key> implements AutoCloseable {
     this.executors.forEach(executor -> executor.shutdown());
   }
 
-  public void taskFinished(final Task task) {
+  synchronized void taskFinished(final Task task) {
     LOGGER.info("Task {} finished", keyExtractor.apply(task));
     remove(task);
-    submit(nextEligibleTask());
+    submitEligibleTasks();
   }
 }
